@@ -5,13 +5,25 @@ using System.Diagnostics;
 using System.Drawing;
 using System.IO;
 using System.Linq;
+using System.Collections.Concurrent;
 using System.Runtime.InteropServices;
+using System.Threading;
+using System.Threading.Tasks;
 using System.Windows.Forms;
 
-#region Scanner — direct known-path lookup
+#region Scanner — known-path lookup + keyword deep scan
 static class Scanner
 {
-    // All known paths relative to drive root where the Config folder lives
+    // System dirs to skip at drive root (case-insensitive)
+    static readonly HashSet<string> RootSkip = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "Windows", "$Recycle.Bin", "System Volume Information",
+        "Recovery", "Config.Msi", "MSOCache", "PerfLogs",
+        "Documents and Settings", "$WinREAgent", "Boot",
+    };
+
+    // ── Phase 1: known-path quick scan (instant) ──
+
     static readonly string[] ConfigPaths =
     {
         @"Program Files (x86)\Tencent Games\VALORANT\live\ShooterGame\Saved\Config",
@@ -25,7 +37,7 @@ static class Scanner
         @"Riot Games\VALORANT\ShooterGame\Saved\Config",
     };
 
-    public static List<string> FindAll()
+    static List<string> QuickScan()
     {
         var results = new List<string>();
 
@@ -38,27 +50,7 @@ static class Scanner
             {
                 string configDir = Path.Combine(drive, relPath);
                 if (!Directory.Exists(configDir)) continue;
-
-                foreach (string subDir in Directory.EnumerateDirectories(configDir))
-                {
-                    string name = Path.GetFileName(subDir);
-
-                    // WindowsClient directly under Config (no GUID layer)
-                    if (name.Equals("WindowsClient", StringComparison.OrdinalIgnoreCase))
-                    {
-                        string target = Path.Combine(subDir, "GameUserSettings.ini");
-                        if (File.Exists(target))
-                            results.Add(target);
-                        continue;
-                    }
-
-                    // GUID folders: 32+ chars with hyphens (handles -alpha1 suffix)
-                    if (name.Length < 32 || !name.Contains('-')) continue;
-
-                    string guidTarget = Path.Combine(subDir, "WindowsClient", "GameUserSettings.ini");
-                    if (File.Exists(guidTarget))
-                        results.Add(guidTarget);
-                }
+                CollectFromConfig(configDir, results);
             }
 
             // Also check %LOCALAPPDATA%
@@ -66,17 +58,153 @@ static class Scanner
                 Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
                 @"VALORANT\Saved\Config");
             if (Directory.Exists(localConfig))
-            {
-                foreach (string subDir in Directory.EnumerateDirectories(localConfig))
-                {
-                    string target = Path.Combine(subDir, "WindowsClient", "GameUserSettings.ini");
-                    if (File.Exists(target))
-                        results.Add(target);
-                }
-            }
+                CollectFromConfig(localConfig, results);
         }
 
         return results;
+    }
+
+    // ── Phase 2: keyword-based deep scan (like Everything) ──
+
+    static List<string> DeepSearch(IProgress<string>? progress, CancellationToken cancel)
+    {
+        var bag = new ConcurrentBag<string>();
+        var drives = Environment.GetLogicalDrives();
+
+        Parallel.ForEach(drives, drive =>
+        {
+            try { if (!new DriveInfo(drive).IsReady) return; }
+            catch { return; }
+
+            Walk(drive, 0, bag, progress, cancel);
+        });
+
+        return bag.ToList();
+    }
+
+    static void Walk(string dir, int depth, ConcurrentBag<string> bag,
+        IProgress<string>? progress, CancellationToken cancel)
+    {
+        if (cancel.IsCancellationRequested || depth > 15) return;
+
+        try
+        {
+            foreach (string sub in Directory.EnumerateDirectories(dir))
+            {
+                if (cancel.IsCancellationRequested) return;
+
+                string name = Path.GetFileName(sub);
+
+                // Root-level system dir skip
+                if (depth == 0 && RootSkip.Contains(name)) continue;
+
+                // Skip hidden + system dirs entirely
+                FileAttributes attr;
+                try { attr = File.GetAttributes(sub); }
+                catch { continue; }
+                if ((attr & (FileAttributes.Hidden | FileAttributes.System)) != 0) continue;
+
+                progress?.Report(sub);
+
+                // ── "ShooterGame" is the gold key — unique to UE games ──
+                if (name.Equals("ShooterGame", StringComparison.OrdinalIgnoreCase))
+                {
+                    string cfg = Path.Combine(sub, "Saved", "Config");
+                    if (Directory.Exists(cfg))
+                        CollectFromConfig(cfg, bag);
+                    continue; // no need to go deeper
+                }
+
+                // ── Also check for WindowsClient / GameUserSettings.ini in case structure is flat ──
+                string directIni = Path.Combine(sub, "GameUserSettings.ini");
+                if (File.Exists(directIni) && IsValorantConfig(directIni))
+                    bag.Add(directIni);
+
+                // ── Recurse into promising dirs, or stay shallow near root ──
+                bool promising = name.Contains("VALORANT") || name.Contains("无畏契约") ||
+                                 name.Contains("Game") || name.Contains("Riot") ||
+                                 name.Contains("Tencent") || name.Contains("腾讯") ||
+                                 name.Contains("Program")   // Program Files / Program Files (x86)
+                                 ;
+
+                if (promising || depth < 2)
+                    Walk(sub, depth + 1, bag, progress, cancel);
+            }
+        }
+        catch (UnauthorizedAccessException) { }
+        catch (PathTooLongException) { }
+        catch (DirectoryNotFoundException) { }
+    }
+
+    // ── Collect GameUserSettings.ini from a "Config" directory ──
+    static void CollectFromConfig(string configDir, System.Collections.Concurrent.ConcurrentBag<string> bag)
+    {
+        try
+        {
+            foreach (string entry in Directory.EnumerateDirectories(configDir))
+            {
+                string entryName = Path.GetFileName(entry);
+
+                if (entryName.Equals("WindowsClient", StringComparison.OrdinalIgnoreCase))
+                {
+                    // Option A: Config/WindowsClient/GameUserSettings.ini
+                    string ini = Path.Combine(entry, "GameUserSettings.ini");
+                    if (File.Exists(ini) && IsValorantConfig(ini))
+                        bag.Add(ini);
+                }
+                else
+                {
+                    // Option B: Config/<GUID>/WindowsClient/GameUserSettings.ini
+                    string ini = Path.Combine(entry, "WindowsClient", "GameUserSettings.ini");
+                    if (File.Exists(ini) && IsValorantConfig(ini))
+                        bag.Add(ini);
+                }
+            }
+        }
+        catch { }
+    }
+
+    static void CollectFromConfig(string configDir, List<string> list)
+    {
+        try
+        {
+            foreach (string entry in Directory.EnumerateDirectories(configDir))
+            {
+                string entryName = Path.GetFileName(entry);
+
+                if (entryName.Equals("WindowsClient", StringComparison.OrdinalIgnoreCase))
+                {
+                    string ini = Path.Combine(entry, "GameUserSettings.ini");
+                    if (File.Exists(ini) && IsValorantConfig(ini))
+                        list.Add(ini);
+                }
+                else
+                {
+                    string ini = Path.Combine(entry, "WindowsClient", "GameUserSettings.ini");
+                    if (File.Exists(ini) && IsValorantConfig(ini))
+                        list.Add(ini);
+                }
+            }
+        }
+        catch { }
+    }
+
+    // ── Combined: quick + deep, deduped ──
+    public static List<string> ScanAll(IProgress<string>? progress = null, CancellationToken cancel = default)
+    {
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        // Phase 1 — known paths (instant)
+        foreach (string f in QuickScan()) seen.Add(f);
+
+        // Phase 2 — recursive keyword search
+        if (!cancel.IsCancellationRequested)
+        {
+            foreach (string f in DeepSearch(progress, cancel))
+                seen.Add(f);
+        }
+
+        return seen.OrderBy(x => x).ToList();
     }
 
     public static bool IsValorantConfig(string path)
@@ -284,6 +412,7 @@ sealed class MainForm : Form
     ComboBox _resPreset = null!;
     TextBox _resX = null!;
     TextBox _resY = null!;
+    CancellationTokenSource? _scanCts;
 
     public MainForm()
     {
@@ -502,20 +631,51 @@ sealed class MainForm : Form
     #region Actions
     void DoScan()
     {
+        // Cancel any in-flight scan
+        _scanCts?.Cancel();
+        _scanCts = new CancellationTokenSource();
+        var cancel = _scanCts.Token;
+
         _listBox.Items.Clear();
-        SetBusy(true, "正在扫描...");
-        System.Threading.Tasks.Task.Run(() =>
+        SetBusy(true, "正在全盘扫描 (关键字匹配)...");
+
+        Task.Run(() =>
         {
-            var results = Scanner.FindAll();
-            Invoke(() =>
+            var progress = new Progress<string>(dir =>
             {
-                foreach (string p in results) _listBox.Items.Add(p, true);
-                _status.Text = results.Count > 0
-                    ? $"扫描完成 — 找到 {results.Count} 个目标"
-                    : "扫描完成 — 未找到 (请确认游戏已安装并至少启动过一次)";
-                SetBusy(false);
+                try
+                {
+                    Invoke(() =>
+                    {
+                        // Show shortened path in status bar
+                        string shortPath = dir.Length > 75
+                            ? "..." + dir.Substring(dir.Length - 72)
+                            : dir;
+                        _status.Text = $"扫描中: {shortPath}";
+                    });
+                }
+                catch { /* form closed */ }
             });
-        });
+
+            var results = Scanner.ScanAll(progress, cancel);
+
+            try
+            {
+                Invoke(() =>
+                {
+                    if (cancel.IsCancellationRequested) return;
+
+                    foreach (string p in results)
+                        _listBox.Items.Add(p, true);
+
+                    _status.Text = results.Count > 0
+                        ? $"扫描完成 — 找到 {results.Count} 个目标"
+                        : "扫描完成 — 未找到 (请确认游戏已安装并至少启动过一次)";
+                    SetBusy(false);
+                });
+            }
+            catch { /* form closed before invoke */ }
+        }, cancel);
     }
 
     void DoApply()
