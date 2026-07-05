@@ -10,16 +10,22 @@
 
 ### 1. 自动扫描配置文件
 
-启动后自动扫描所有磁盘分区，定位 VALORANT 的 `GameUserSettings.ini`，覆盖以下路径：
+启动后自动扫描所有磁盘分区，定位 VALORANT 的 `GameUserSettings.ini`。
 
-| 发行商 | 典型路径 |
-|--------|----------|
-| 腾讯（国服） | `:\Program Files (x86)\Tencent Games\VALORANT\live\ShooterGame\Saved\Config` |
-| 腾讯（国服） | `:\Tencent Games\无畏契约\live\ShooterGame\Saved\Config` |
-| Riot（国际服） | `:\Program Files\Riot Games\VALORANT\live\ShooterGame\Saved\Config` |
-| Riot（国际服） | `:\Riot Games\VALORANT\live\ShooterGame\Saved\Config` |
+**扫描分两阶段：**
 
-同时检查 `%LOCALAPPDATA%\VALORANT\Saved\Config`，确保覆盖所有可能的安装位置。
+- **快速扫描（秒出）** — 检查已知安装路径：
+
+| 路径 |
+|------|
+| `:\Program Files (x86)\Tencent Games\VALORANT\live\ShooterGame\Saved\Config` |
+| `:\Program Files\Tencent Games\VALORANT\live\ShooterGame\Saved\Config` |
+| `:\Tencent Games\VALORANT\live\ShooterGame\Saved\Config` |
+| `:\Tencent Games\无畏契约\live\ShooterGame\Saved\Config` |
+
+- **深度扫描（关键字匹配）** — 类似 Everything，全盘递归搜索 `ShooterGame` 目录（Unreal Engine 独有标记），以及 `VALORANT`、`无畏契约` 等关键字命中路径，覆盖网吧等非标准安装位置。多盘并行，状态栏实时显示进度。
+
+同时检查 `%LOCALAPPDATA%\VALORANT\Saved\Config`。
 
 扫描结果以勾选列表展示，默认全选。右键列表项可：
 - **打开文件** — 用记事本查看当前配置
@@ -28,7 +34,7 @@
 
 ### 2. 手动指定路径
 
-支持手动输入或浏览选择任意 `GameUserSettings.ini` 文件路径。**手动路径优先级最高**，会和应用勾选的扫描结果一起写入。
+支持手动输入或浏览选择任意 `GameUserSettings.ini` 文件路径。**手动路径优先级最高**，会和勾选的扫描结果一起写入。
 
 ### 3. 游戏分辨率预设
 
@@ -80,7 +86,7 @@
 - **确认对话框** — 应用前列出所有目标文件，用户确认后写入
 - **错误处理**：
   - 权限不足 → 提示以管理员身份运行
-  - 文件被占用 → 提示关闭游戏和反作弊程序
+  - 文件被占用 → 提示关闭游戏
   - 路径不存在 → 询问是否仍要创建
 
 ---
@@ -92,7 +98,7 @@
 | 操作系统 | Windows 10 / 11 (x64) |
 | 运行时 | 无需安装 — 自包含发布，双击即用 |
 | 权限 | 建议**以管理员身份运行**（游戏目录可能有权限保护） |
-| 游戏版本 | 支持国服（腾讯）和国际服（Riot） |
+| 游戏版本 | 仅支持国服（腾讯无畏契约） |
 
 ---
 
@@ -100,7 +106,7 @@
 
 1. 从 [Releases](../../releases) 下载 `ValorantConfigTool.exe`
 2. **右键 → 以管理员身份运行**
-3. 程序自动扫描已安装的 VALORANT 配置文件
+3. 程序自动深度扫描已安装的 VALORANT 配置文件
 4. 勾选要修改的配置（或手动指定路径）
 5. 在下拉菜单选择分辨率预设，或选"自定义…"手动输入
 6. 在预览区确认配置内容
@@ -152,9 +158,9 @@ ValorantToolkit/
 
 ## 注意事项
 
-- **关闭游戏** — 修改配置前请先退出 VALORANT 和反作弊程序（VGUARD），否则文件被占用无法写入
+- **关闭游戏** — 修改配置前请先退出 VALORANT，否则文件被占用无法写入
 - **备份** — 程序会自动创建 `.bak` 备份，如需恢复，删除修改后的 `.ini` 并将 `.bak` 重命名即可
-- **系统分辨率** — 切换系统分辨率仅影响 Windows 桌面，不影响其他程序的数据。如切换后黑屏，Windows 会在 15 秒后自动恢复
+- **系统分辨率** — 切换系统分辨率仅影响 Windows 桌面。如切换后黑屏，Windows 会在 15 秒后自动恢复
 - **拉伸分辨率** — 想要 4:3 拉伸效果（去除黑边），需先在 NVIDIA 控制面板 / AMD Software 中将缩放模式设为"全屏"
 
 ---

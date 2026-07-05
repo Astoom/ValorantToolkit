@@ -30,11 +30,6 @@ static class Scanner
         @"Program Files\Tencent Games\VALORANT\live\ShooterGame\Saved\Config",
         @"Tencent Games\VALORANT\live\ShooterGame\Saved\Config",
         @"Tencent Games\无畏契约\live\ShooterGame\Saved\Config",
-        @"Program Files (x86)\Riot Games\VALORANT\live\ShooterGame\Saved\Config",
-        @"Program Files\Riot Games\VALORANT\live\ShooterGame\Saved\Config",
-        @"Riot Games\VALORANT\live\ShooterGame\Saved\Config",
-        @"VALORANT\live\ShooterGame\Saved\Config",
-        @"Riot Games\VALORANT\ShooterGame\Saved\Config",
     };
 
     static List<string> QuickScan()
@@ -122,7 +117,7 @@ static class Scanner
 
                 // ── Recurse into promising dirs, or stay shallow near root ──
                 bool promising = name.Contains("VALORANT") || name.Contains("无畏契约") ||
-                                 name.Contains("Game") || name.Contains("Riot") ||
+                                 name.Contains("Game") ||
                                  name.Contains("Tencent") || name.Contains("腾讯") ||
                                  name.Contains("Program")   // Program Files / Program Files (x86)
                                  ;
@@ -317,7 +312,7 @@ LastOpened=ShooterGame
         }
         catch (IOException ex) when ((ex.HResult & 0xFFFF) == 0x0020)
         {
-            MessageBox.Show($"文件被占用!\n\n{path}\n\n请先关闭游戏和反作弊程序。",
+            MessageBox.Show($"文件被占用!\n\n{path}\n\n请先关闭游戏。",
                 "错误", MessageBoxButtons.OK, MessageBoxIcon.Error);
         }
         catch (Exception ex)
